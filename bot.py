@@ -31,9 +31,7 @@ def load_data():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except FileNotFoundError:
-        return {}
-    except json.JSONDecodeError:
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
@@ -64,6 +62,24 @@ def get_today():
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def get_result_text(total):
+    if total <= 14:
+        return "Низкий уровень стресса"
+    elif total <= 24:
+        return "Умеренный стресс"
+    else:
+        return "Высокий уровень стресса (требует внимания)"
+
+
+def get_stress_level(score):
+    if score <= 14:
+        return "🟢 Низкий уровень стресса"
+    elif score <= 24:
+        return "🟡 Умеренный стресс"
+    else:
+        return "🔴 Высокий уровень стресса (требует внимания)"
+
+
 def get_average_stats():
     data = load_data()
     today = get_today()
@@ -75,15 +91,6 @@ def get_average_stats():
     avg = sum(scores) / len(scores)
     count = len(scores)
     return avg, count
-
-
-def get_result_text(total):
-    if total <= 14:
-        return "Низкий уровень стресса"
-    elif total <= 24:
-        return "Умеренный стресс"
-    else:
-        return "Высокий стресс"
 
 
 @dp.message(Command("start"))
@@ -99,7 +106,11 @@ async def cmd_start(message: types.Message):
         avg, count = get_average_stats()
         text = "Сегодня уже 10 человек прошли тест 🙌"
         if avg is not None:
-            text += f"\n\n📊 Уже прошло: {count} / 10\nСредний стресс: {avg:.2f}"
+            text += (
+                f"\n\n📊 Сегодня прошло: {count} / 10"
+                f"\nСредний стресс: {avg:.2f}"
+                f"\nОценка: {get_stress_level(avg)}"
+            )
         await message.answer(text, reply_markup=stats_keyboard())
         return
 
@@ -122,7 +133,8 @@ async def cmd_stats(message: types.Message):
     await message.answer(
         f"📊 Статистика за сегодня:\n"
         f"Прошло: {count} / 10\n"
-        f"Средний уровень стресса: {avg:.2f}"
+        f"Средний балл: {avg:.2f}\n"
+        f"Оценка: {get_stress_level(avg)}"
     )
 
 
@@ -136,7 +148,8 @@ async def show_stats(callback: types.CallbackQuery):
         await callback.message.answer(
             f"📊 Статистика за сегодня:\n"
             f"Прошло: {count} / 10\n"
-            f"Средний уровень стресса: {avg:.2f}"
+            f"Средний балл: {avg:.2f}\n"
+            f"Оценка: {get_stress_level(avg)}"
         )
 
     await callback.answer()
@@ -188,7 +201,10 @@ async def handle_callback(callback: types.CallbackQuery):
         )
 
         if avg is not None:
-            text += f"\nСредний стресс по офису: {avg:.2f}"
+            text += (
+                f"\nСредний стресс по офису: {avg:.2f}"
+                f"\nОценка по офису: {get_stress_level(avg)}"
+            )
 
         await callback.message.edit_text(text, reply_markup=stats_keyboard())
 
