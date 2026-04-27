@@ -1,9 +1,11 @@
 import asyncio
 import json
-from datetime import datetime
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
+from datetime import datetime
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -24,74 +26,134 @@ questions = [
 
 user_data = {}
 
-# 📦 загрузка JSON
+
 def load_data():
     try:
-        with open(DATA_FILE, "r") as f:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except:
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
         return {}
 
-# 💾 сохранение JSON
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
 
-# 🔘 клавиатура
+def save_data(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+
 def get_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="1", callback_data="1"),
-            InlineKeyboardButton(text="2", callback_data="2"),
-            InlineKeyboardButton(text="3", callback_data="3"),
-            InlineKeyboardButton(text="4", callback_data="4"),
-            InlineKeyboardButton(text="5", callback_data="5"),
+            InlineKeyboardButton(text="1", callback_data="score:1"),
+            InlineKeyboardButton(text="2", callback_data="score:2"),
+            InlineKeyboardButton(text="3", callback_data="score:3"),
+            InlineKeyboardButton(text="4", callback_data="score:4"),
+            InlineKeyboardButton(text="5", callback_data="score:5"),
         ]
     ])
 
-# ▶️ старт + статистика
-@dp.message()
-async def start(message: types.Message):
+
+def stats_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Посмотреть статистику", callback_data="show_stats")]
+    ])
+
+
+def get_today():
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def get_average_stats():
     data = load_data()
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = get_today()
 
-    # /start
-    if message.text == "/start":
-        user_id = str(message.from_user.id)
+    if today not in data or not data[today].get("users"):
+        return None, 0
 
-        if today not in data:
-            data[today] = {"users": {}}
+    scores = list(data[today]["users"].values())
+    avg = sum(scores) / len(scores)
+    count = len(scores)
+    return avg, count
 
-        if len(data[today]["users"]) >= 10 and user_id not in data[today]["users"]:
-            await message.answer("Сегодня уже 10 человек прошли тест 🙌")
-            return
 
-        user_data[user_id] = {"step": 0, "score": 0}
-        await message.answer(questions[0], reply_markup=get_keyboard())
+def get_result_text(total):
+    if total <= 14:
+        return "Низкий уровень стресса"
+    elif total <= 24:
+        return "Умеренный стресс"
+    else:
+        return "Высокий стресс"
 
-    # /stats
-    elif message.text == "/stats":
-        today = datetime.now().strftime("%Y-%m-%d")
-        data = load_data()
 
-        if today in data and data[today]["users"]:
-            scores = list(data[today]["users"].values())
-            avg = sum(scores) / len(scores)
-            await message.answer(
-                f"📊 Сегодня прошло: {len(scores)} / 10\n"
-                f"Средний стресс: {avg:.2f}"
-            )
-        else:
-            await message.answer("Пока нет данных за сегодня")
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    user_id = str(message.from_user.id)
+    today = get_today()
+    data = load_data()
 
-# 🔘 ответы
-@dp.callback_query()
+    if today not in data:
+        data[today] = {"users": {}}
+
+    if len(data[today]["users"]) >= 10 and user_id not in data[today]["users"]:
+        avg, count = get_average_stats()
+        text = "Сегодня уже 10 человек прошли тест 🙌"
+        if avg is not None:
+            text += f"\n\n📊 Уже прошло: {count} / 10\nСредний стресс: {avg:.2f}"
+        await message.answer(text, reply_markup=stats_keyboard())
+        return
+
+    user_data[user_id] = {"step": 0, "score": 0}
+
+    await message.answer(
+        "Пройди короткий тест по шкале 1–5.\n\n" + questions[0],
+        reply_markup=get_keyboard()
+    )
+
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    avg, count = get_average_stats()
+
+    if avg is None:
+        await message.answer("Пока нет данных за сегодня.")
+        return
+
+    await message.answer(
+        f"📊 Статистика за сегодня:\n"
+        f"Прошло: {count} / 10\n"
+        f"Средний уровень стресса: {avg:.2f}"
+    )
+
+
+@dp.callback_query(lambda c: c.data == "show_stats")
+async def show_stats(callback: types.CallbackQuery):
+    avg, count = get_average_stats()
+
+    if avg is None:
+        await callback.message.answer("Пока нет данных за сегодня.")
+    else:
+        await callback.message.answer(
+            f"📊 Статистика за сегодня:\n"
+            f"Прошло: {count} / 10\n"
+            f"Средний уровень стресса: {avg:.2f}"
+        )
+
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("score:"))
 async def handle_callback(callback: types.CallbackQuery):
     user_id = str(callback.from_user.id)
-    value = int(callback.data)
 
     if user_id not in user_data:
         await callback.answer("Нажми /start")
+        return
+
+    try:
+        value = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("Ошибка данных")
         return
 
     user_data[user_id]["score"] += value
@@ -106,34 +168,38 @@ async def handle_callback(callback: types.CallbackQuery):
         )
     else:
         total = user_data[user_id]["score"]
+        result = get_result_text(total)
 
-        if total <= 14:
-            result = "Низкий уровень стресса"
-        elif total <= 24:
-            result = "Умеренный стресс"
-        else:
-            result = "Высокий стресс"
-
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = get_today()
         data = load_data()
 
         if today not in data:
             data[today] = {"users": {}}
 
-        # 💾 сохраняем пользователя
         data[today]["users"][user_id] = total
         save_data(data)
 
-        await callback.message.edit_text(
-            f"Результат: {total}\n{result}"
+        avg, count = get_average_stats()
+
+        text = (
+            f"Твой результат: {total}\n"
+            f"{result}\n\n"
+            f"📊 Сегодня прошло: {count} / 10"
         )
+
+        if avg is not None:
+            text += f"\nСредний стресс по офису: {avg:.2f}"
+
+        await callback.message.edit_text(text, reply_markup=stats_keyboard())
 
         del user_data[user_id]
 
     await callback.answer()
 
-# 🚀 запуск
+
 async def main():
     await dp.start_polling(bot)
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
