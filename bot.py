@@ -40,6 +40,10 @@ def save_data(data):
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
+def get_today():
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 def get_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -56,10 +60,6 @@ def stats_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Посмотреть статистику", callback_data="show_stats")]
     ])
-
-
-def get_today():
-    return datetime.now().strftime("%Y-%m-%d")
 
 
 def get_result_text(total):
@@ -80,7 +80,7 @@ def get_stress_level(score):
         return "🔴 Высокий уровень стресса (требует внимания)"
 
 
-def get_average_stats():
+def get_daily_stats():
     data = load_data()
     today = get_today()
 
@@ -101,16 +101,26 @@ async def cmd_start(message: types.Message):
 
     if today not in data:
         data[today] = {"users": {}}
+        save_data(data)
 
-    if len(data[today]["users"]) >= 10 and user_id not in data[today]["users"]:
-        avg, count = get_average_stats()
-        text = "Сегодня уже 10 человек прошли тест 🙌"
+    if user_id in data[today]["users"]:
+        total = data[today]["users"][user_id]
+        result = get_result_text(total)
+        avg, count = get_daily_stats()
+
+        text = (
+            "Ты уже проходил тест сегодня.\n\n"
+            f"Твой результат: {total}\n"
+            f"{result}"
+        )
+
         if avg is not None:
             text += (
-                f"\n\n📊 Сегодня прошло: {count} / 10"
-                f"\nСредний стресс: {avg:.2f}"
-                f"\nОценка: {get_stress_level(avg)}"
+                f"\n\n📊 Сегодня прошло: {count} человек"
+                f"\nСредний стресс по офису: {avg:.2f}"
+                f"\nОценка по офису: {get_stress_level(avg)}"
             )
+
         await message.answer(text, reply_markup=stats_keyboard())
         return
 
@@ -124,7 +134,7 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: types.Message):
-    avg, count = get_average_stats()
+    avg, count = get_daily_stats()
 
     if avg is None:
         await message.answer("Пока нет данных за сегодня.")
@@ -132,7 +142,7 @@ async def cmd_stats(message: types.Message):
 
     await message.answer(
         f"📊 Статистика за сегодня:\n"
-        f"Прошло: {count} / 10\n"
+        f"Прошло: {count} человек\n"
         f"Средний балл: {avg:.2f}\n"
         f"Оценка: {get_stress_level(avg)}"
     )
@@ -140,14 +150,14 @@ async def cmd_stats(message: types.Message):
 
 @dp.callback_query(lambda c: c.data == "show_stats")
 async def show_stats(callback: types.CallbackQuery):
-    avg, count = get_average_stats()
+    avg, count = get_daily_stats()
 
     if avg is None:
         await callback.message.answer("Пока нет данных за сегодня.")
     else:
         await callback.message.answer(
             f"📊 Статистика за сегодня:\n"
-            f"Прошло: {count} / 10\n"
+            f"Прошло: {count} человек\n"
             f"Средний балл: {avg:.2f}\n"
             f"Оценка: {get_stress_level(avg)}"
         )
@@ -192,12 +202,12 @@ async def handle_callback(callback: types.CallbackQuery):
         data[today]["users"][user_id] = total
         save_data(data)
 
-        avg, count = get_average_stats()
+        avg, count = get_daily_stats()
 
         text = (
             f"Твой результат: {total}\n"
             f"{result}\n\n"
-            f"📊 Сегодня прошло: {count} / 10"
+            f"📊 Сегодня прошло: {count} человек"
         )
 
         if avg is not None:
