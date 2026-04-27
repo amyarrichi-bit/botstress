@@ -1,11 +1,16 @@
 import asyncio
+import json
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import os
 
-TOKEN = "8584246495:AAFXctUB0uK4ymTK1U_fGm3v6LjK0X6PcL4"
+TOKEN = os.getenv("BOT_TOKEN")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+DATA_FILE = "data.json"
 
 questions = [
     "1. Сегодня я чувствую себя напряжённым(ой) или перегруженным(ой).",
@@ -19,9 +24,22 @@ questions = [
 
 user_data = {}
 
-# 🔘 Кнопки 1–5
+# 📦 загрузка JSON
+def load_data():
+    try:
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+# 💾 сохранение JSON
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+# 🔘 клавиатура
 def get_keyboard():
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="1", callback_data="1"),
             InlineKeyboardButton(text="2", callback_data="2"),
@@ -30,44 +48,52 @@ def get_keyboard():
             InlineKeyboardButton(text="5", callback_data="5"),
         ]
     ])
-    return kb
 
-# ▶️ старт
+# ▶️ старт + статистика
 @dp.message()
 async def start(message: types.Message):
+    data = load_data()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # /start
     if message.text == "/start":
-        user_id = message.from_user.id
+        user_id = str(message.from_user.id)
+
+        if today not in data:
+            data[today] = {"users": {}}
+
+        if len(data[today]["users"]) >= 10 and user_id not in data[today]["users"]:
+            await message.answer("Сегодня уже 10 человек прошли тест 🙌")
+            return
+
         user_data[user_id] = {"step": 0, "score": 0}
-        await message.answer(
-            "Оцени по шкале 1–5:\n\n" + questions[0],
-            reply_markup=get_keyboard()
-        )
+        await message.answer(questions[0], reply_markup=get_keyboard())
 
+    # /stats
     elif message.text == "/stats":
-        try:
-            scores = []
-            with open("results.txt", "r") as f:
-                for line in f:
-                    scores.append(int(line.strip()))
+        today = datetime.now().strftime("%Y-%m-%d")
+        data = load_data()
 
-            if scores:
-                avg = sum(scores) / len(scores)
-                await message.answer(f"📊 Средний уровень стресса: {avg:.2f}")
-            else:
-                await message.answer("Пока нет данных")
-        except:
-            await message.answer("Пока нет данных")
+        if today in data and data[today]["users"]:
+            scores = list(data[today]["users"].values())
+            avg = sum(scores) / len(scores)
+            await message.answer(
+                f"📊 Сегодня прошло: {len(scores)} / 10\n"
+                f"Средний стресс: {avg:.2f}"
+            )
+        else:
+            await message.answer("Пока нет данных за сегодня")
 
-# 🔘 обработка кнопок
+# 🔘 ответы
 @dp.callback_query()
 async def handle_callback(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
+    user_id = str(callback.from_user.id)
+    value = int(callback.data)
 
     if user_id not in user_data:
         await callback.answer("Нажми /start")
         return
 
-    value = int(callback.data)
     user_data[user_id]["score"] += value
     user_data[user_id]["step"] += 1
 
@@ -86,15 +112,21 @@ async def handle_callback(callback: types.CallbackQuery):
         elif total <= 24:
             result = "Умеренный стресс"
         else:
-            result = "Высокий уровень стресса"
+            result = "Высокий стресс"
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        data = load_data()
+
+        if today not in data:
+            data[today] = {"users": {}}
+
+        # 💾 сохраняем пользователя
+        data[today]["users"][user_id] = total
+        save_data(data)
 
         await callback.message.edit_text(
-            f"Твой результат: {total}\n{result}"
+            f"Результат: {total}\n{result}"
         )
-
-        # 💾 сохраняем только балл
-        with open("results.txt", "a") as f:
-            f.write(f"{total}\n")
 
         del user_data[user_id]
 
